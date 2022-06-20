@@ -26,3 +26,8 @@ static inline bool nesting_enabled(struct kvm *kvm)
 {
 	return kvm->arch.nested_enable && kvm_is_radix(kvm);
 }
+
+void switch_pmu_to_guest(struct kvm_vcpu *vcpu,
+			    struct p9_pmu_host_os_sprs *host_os_sprs);
+void switch_pmu_to_host(struct kvm_vcpu *vcpu,
+			    struct p9_pmu_host_os_sprs *host_os_sprs);
