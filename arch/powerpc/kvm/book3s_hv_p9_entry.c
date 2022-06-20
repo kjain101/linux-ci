@@ -37,7 +37,7 @@ do_freeze:
 }
 
 void switch_pmu_to_guest(struct kvm_vcpu *vcpu,
-			 struct p9_host_os_sprs *host_os_sprs)
+			 struct p9_pmu_host_os_sprs *host_os_sprs)
 {
 	struct lppaca *lp;
 	int load_pmu = 1;
@@ -126,7 +126,7 @@ void switch_pmu_to_guest(struct kvm_vcpu *vcpu,
 EXPORT_SYMBOL_GPL(switch_pmu_to_guest);
 
 void switch_pmu_to_host(struct kvm_vcpu *vcpu,
-			struct p9_host_os_sprs *host_os_sprs)
+			struct p9_pmu_host_os_sprs *host_os_sprs)
 {
 	struct lppaca *lp;
 	int save_pmu = 1;
@@ -769,6 +769,7 @@ EXPORT_SYMBOL_GPL(kvmppc_msr_hard_disable_set_facilities);
 int kvmhv_vcpu_entry_p9(struct kvm_vcpu *vcpu, u64 time_limit, unsigned long lpcr, u64 *tb)
 {
 	struct p9_host_os_sprs host_os_sprs;
+	struct p9_pmu_host_os_sprs pmu_host_os_sprs;
 	struct kvm *kvm = vcpu->kvm;
 	struct kvm_nested_guest *nested = vcpu->arch.nested;
 	struct kvmppc_vcore *vc = vcpu->arch.vcore;
@@ -959,9 +960,9 @@ tm_return_to_guest:
 
 	accumulate_time(vcpu, &vcpu->arch.guest_time);
 
-	switch_pmu_to_guest(vcpu, &host_os_sprs);
+	switch_pmu_to_guest(vcpu, &pmu_host_os_sprs);
 	kvmppc_p9_enter_guest(vcpu);
-	switch_pmu_to_host(vcpu, &host_os_sprs);
+	switch_pmu_to_host(vcpu, &pmu_host_os_sprs);
 
 	accumulate_time(vcpu, &vcpu->arch.rm_intr);
 

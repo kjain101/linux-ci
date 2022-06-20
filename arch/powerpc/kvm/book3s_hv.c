@@ -3947,6 +3947,7 @@ static int kvmhv_vcpu_entry_p9_nested(struct kvm_vcpu *vcpu, u64 time_limit, uns
 	unsigned long msr;
 	struct hv_guest_state hvregs;
 	struct p9_host_os_sprs host_os_sprs;
+	struct p9_pmu_host_os_sprs pmu_host_os_sprs;
 	s64 dec;
 	int trap;
 
@@ -4004,11 +4005,11 @@ static int kvmhv_vcpu_entry_p9_nested(struct kvm_vcpu *vcpu, u64 time_limit, uns
 
 	mtspr(SPRN_DAR, vcpu->arch.shregs.dar);
 	mtspr(SPRN_DSISR, vcpu->arch.shregs.dsisr);
-	switch_pmu_to_guest(vcpu, &host_os_sprs);
+	switch_pmu_to_guest(vcpu, &pmu_host_os_sprs);
 	trap = plpar_hcall_norets(H_ENTER_NESTED, __pa(&hvregs),
 				  __pa(&vcpu->arch.regs));
 	kvmhv_restore_hv_return_state(vcpu, &hvregs);
-	switch_pmu_to_host(vcpu, &host_os_sprs);
+	switch_pmu_to_host(vcpu, &pmu_host_os_sprs);
 	vcpu->arch.shregs.msr = vcpu->arch.regs.msr;
 	vcpu->arch.shregs.dar = mfspr(SPRN_DAR);
 	vcpu->arch.shregs.dsisr = mfspr(SPRN_DSISR);
