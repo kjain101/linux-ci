@@ -16,7 +16,3 @@ void store_vcpu_state(struct kvm_vcpu *vcpu);
 void save_p9_host_os_sprs(struct p9_host_os_sprs *host_os_sprs);
 void restore_p9_host_os_sprs(struct kvm_vcpu *vcpu,
 				    struct p9_host_os_sprs *host_os_sprs);
-void switch_pmu_to_guest(struct kvm_vcpu *vcpu,
-			    struct p9_pmu_host_os_sprs *host_os_sprs);
-void switch_pmu_to_host(struct kvm_vcpu *vcpu,
-			    struct p9_pmu_host_os_sprs *host_os_sprs);
