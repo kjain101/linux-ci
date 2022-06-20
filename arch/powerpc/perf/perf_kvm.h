@@ -21,3 +21,8 @@ struct p9_pmu_host_os_sprs {
 	unsigned long sier3;
 	unsigned long sdar;
 };
+
+static inline bool nesting_enabled(struct kvm *kvm)
+{
+	return kvm->arch.nested_enable && kvm_is_radix(kvm);
+}
