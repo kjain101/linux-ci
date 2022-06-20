@@ -10,11 +10,6 @@ struct p9_host_os_sprs {
 	unsigned long amr;
 };
 
-static inline bool nesting_enabled(struct kvm *kvm)
-{
-	return kvm->arch.nested_enable && kvm_is_radix(kvm);
-}
-
 bool load_vcpu_state(struct kvm_vcpu *vcpu,
 			   struct p9_host_os_sprs *host_os_sprs);
 void store_vcpu_state(struct kvm_vcpu *vcpu);
