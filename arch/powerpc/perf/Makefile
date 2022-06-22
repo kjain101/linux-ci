@@ -18,5 +18,9 @@ obj-$(CONFIG_HV_PERF_CTRS) += hv-24x7.o hv-gpci.o hv-common.o
 
 obj-$(CONFIG_PPC_8xx) += 8xx-pmu.o
 
+ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+obj64-$(CONFIG_KVM_BOOK3S_64_HANDLER) += perf_kvm.o
+endif
+
 obj-$(CONFIG_PPC64)		+= $(obj64-y)
 obj-$(CONFIG_PPC32)		+= $(obj32-y)
