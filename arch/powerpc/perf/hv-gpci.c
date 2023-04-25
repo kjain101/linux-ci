@@ -218,9 +218,75 @@ out:
 	return sprintf(buf, "%d\n", 0);
 }
 
+static ssize_t processor_config_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct hv_gpci_request_buffer *arg;
+	unsigned long ret;
+	size_t n = 0;
+
+	arg = (void *)get_cpu_var(hv_gpci_reqb);
+	memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+	/*
+	 * Pass the counter request 0x90 corresponds to request
+	 * type 'Processor_config', to retrieve
+	 * the system processor information.
+	 * starting_index value implies the starting hardware
+	 * processor index, hence passing the value 0.
+	 */
+	ret = systeminfo_gpci_request(0x90, 0, 0, buf, &n, arg);
+
+	if (!ret)
+		return n;
+
+	if (ret &&  be32_to_cpu(arg->params.detail_rc) != 0x1b)
+		goto out;
+
+	/*
+	 * detail_rc value as '0x1b' implies that buffer size
+	 * cannot accommodate all the information, and a partial buffer
+	 * returned. To handle that, we need to take subsequent requests
+	 * with greater starting index to retrieve additional (missing) data.
+	 * Below loop do subsequent hcalls with greater starting index and add it
+	 * to buffer util we get all the information.
+	 */
+	while (be32_to_cpu(arg->params.detail_rc) == 0x1b) {
+		int returned_values = be16_to_cpu(arg->params.returned_values);
+		int elementsize = be16_to_cpu(arg->params.cv_element_size);
+		int last_element = (returned_values - 1) * elementsize;
+
+		/*
+		 * Since the starting index type is included in the counter_value
+		 * buffer as an element, use the value in the last
+		 * array element plus 1 as subsequent starting index.
+		 */
+		u32 starting_index = arg->bytes[last_element + 3] +
+				(arg->bytes[last_element + 2] << 8) +
+				(arg->bytes[last_element + 1] << 16) +
+				(arg->bytes[last_element] << 24) + 1;
+
+		memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+		ret = systeminfo_gpci_request(0x90, starting_index, 0, buf, &n, arg);
+
+		if (!ret)
+			return n;
+
+		if (ret &&  be32_to_cpu(arg->params.detail_rc) != 0x1b)
+			goto out;
+	}
+	return n;
+
+out:
+	put_cpu_var(hv_gpci_reqb);
+	return sprintf(buf, "%d\n", 0);
+}
+
 static DEVICE_ATTR_RO(kernel_version);
 static DEVICE_ATTR_RO(cpumask);
 static DEVICE_ATTR_RO(processor_bus_topology);
+static DEVICE_ATTR_RO(processor_config);
 
 HV_CAPS_ATTR(version, "0x%x\n");
 HV_CAPS_ATTR(ga, "%d\n");
@@ -236,6 +302,7 @@ static struct attribute *interface_attrs[] = {
 	&hv_caps_attr_lab.attr,
 	&hv_caps_attr_collect_privileged.attr,
 	&dev_attr_processor_bus_topology.attr,
+	&dev_attr_processor_config.attr,
 	NULL,
 };
 
