@@ -23,6 +23,12 @@ enum {
 	HV_GPCI_CM_LAB = (1 << 5)
 };
 
+/* Counter request value to retrieve system information */
+#define PROCESSOR_BUS_TOPOLOGY 0XD0 /* processor bus topology */
+
+/* Interface attribute array index to store system information */
+#define INTERFACE_PROCESSOR_BUS_TOPOLOGY_ATTR	6
+
 #define REQUEST_FILE "../hv-gpci-requests.h"
 #define NAME_LOWER hv_gpci
 #define NAME_UPPER HV_GPCI
