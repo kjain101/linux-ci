@@ -102,6 +102,141 @@ static ssize_t cpumask_show(struct device *dev,
 	return cpumap_print_to_pagebuf(true, buf, &hv_gpci_cpumask);
 }
 
+static DEFINE_PER_CPU(char, hv_gpci_reqb[HGPCI_REQ_BUFFER_SIZE]) __aligned(sizeof(uint64_t));
+
+static unsigned long systeminfo_gpci_request(u32 req, u32 starting_index,
+			u16 secondary_index, char *buf,
+			size_t *n, struct hv_gpci_request_buffer *arg)
+{
+	unsigned long ret;
+	size_t i, j;
+
+	arg->params.counter_request = cpu_to_be32(req);
+	arg->params.starting_index = cpu_to_be32(starting_index);
+	arg->params.secondary_index = cpu_to_be16(secondary_index);
+
+	ret = plpar_hcall_norets(H_GET_PERF_COUNTER_INFO,
+			virt_to_phys(arg), HGPCI_REQ_BUFFER_SIZE);
+
+	/*
+	 * ret value as 'H_PARAMETER' corresponds to 'GEN_BUF_TOO_SMALL',
+	 * which means that the current buffer size cannot accommodate
+	 * all the information and a partial buffer returned.
+	 * hcall fails incase of ret value other than H_SUCCESS or H_PARAMETER.
+	 *
+	 * ret value as H_AUTHORITY implies that partition is not permitted to retrieve
+	 * performance information, and required to set
+	 * "Enable Performance Information Collection" option.
+	 */
+	if (ret == H_AUTHORITY)
+		return -EPERM;
+
+	/*
+	 * ret value as H_NOT_AVAILABLE implies that requested system information is
+	 * not available for the firmware level and platform.
+	 */
+	if (ret == H_NOT_AVAILABLE)
+		return -EOPNOTSUPP;
+
+	/*
+	 * hcall can fail with other possible ret value like H_PRIVILEGE/H_HARDWARE
+	 * because of invalid buffer-length/address or due to some hardware
+	 * error.
+	 */
+	if (ret && (ret != H_PARAMETER))
+		return -EIO;
+
+	/*
+	 * hcall H_GET_PERF_COUNTER_INFO populates the 'returned_values'
+	 * to show the total number of counter_value array elements
+	 * returned via hcall.
+	 * hcall also populates 'cv_element_size' corresponds to individual
+	 * counter_value array element size. Below loop go through all
+	 * counter_value array elements as per their size and add it to
+	 * the output buffer.
+	 */
+	for (i = 0; i < be16_to_cpu(arg->params.returned_values); i++) {
+		j = i * be16_to_cpu(arg->params.cv_element_size);
+
+		for (; j < (i + 1) * be16_to_cpu(arg->params.cv_element_size); j++)
+			*n += sprintf(buf + *n,  "%02x", (u8)arg->bytes[j]);
+		*n += sprintf(buf + *n,  "\n");
+	}
+
+	if (*n >= PAGE_SIZE) {
+		pr_info("System information exceeds PAGE_SIZE\n");
+		return -EFBIG;
+	}
+
+	return ret;
+}
+
+static ssize_t processor_bus_topology_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct hv_gpci_request_buffer *arg;
+	unsigned long ret;
+	size_t n = 0;
+
+	arg = (void *)get_cpu_var(hv_gpci_reqb);
+	memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+	/*
+	 * Pass the counter request value 0xD0 corresponds to request
+	 * type 'Processor_bus_topology', to retrieve
+	 * the system topology information.
+	 * starting_index value implies the starting hardware
+	 * chip id..
+	 */
+	ret = systeminfo_gpci_request(PROCESSOR_BUS_TOPOLOGY, 0, 0, buf, &n, arg);
+
+	if (!ret)
+		return n;
+
+	if (ret != H_PARAMETER)
+		goto out;
+
+	/*
+	 * ret value as 'H_PARAMETER' corresponds to 'GEN_BUF_TOO_SMALL',
+	 * which implies can't accommodate all information, and a partial buffer
+	 * returned. To handle that, we need to take subsequent requests
+	 * with greater starting index to retrieve additional (missing) data.
+	 * Below loop do subsequent hcalls with greater starting index and add it
+	 * to buffer util we get all the information.
+	 */
+	while (ret == H_PARAMETER) {
+		int returned_values = be16_to_cpu(arg->params.returned_values);
+		int elementsize = be16_to_cpu(arg->params.cv_element_size);
+		int last_element = (returned_values - 1) * elementsize;
+
+		/*
+		 * Since the starting index type is included in the counter_value
+		 * buffer as an element, use the value in the last
+		 * array element plus 1 as subsequent starting index.
+		 */
+		u32 starting_index = arg->bytes[last_element + 3] +
+				(arg->bytes[last_element + 2] << 8) +
+				(arg->bytes[last_element + 1] << 16) +
+				(arg->bytes[last_element] << 24) + 1;
+
+		memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+		ret = systeminfo_gpci_request(PROCESSOR_BUS_TOPOLOGY, starting_index,
+				0, buf, &n, arg);
+
+		if (!ret)
+			return n;
+
+		if (ret != H_PARAMETER)
+			goto out;
+	}
+
+	return n;
+out:
+	put_cpu_var(hv_gpci_reqb);
+	return ret;
+}
+
 static DEVICE_ATTR_RO(kernel_version);
 static DEVICE_ATTR_RO(cpumask);
 
@@ -118,6 +253,11 @@ static struct attribute *interface_attrs[] = {
 	&hv_caps_attr_expanded.attr,
 	&hv_caps_attr_lab.attr,
 	&hv_caps_attr_collect_privileged.attr,
+	/*
+	 * This NULL is a placeholder for the processor_bus_topology
+	 * attribute, set in init function if applicable.
+	 */
+	NULL,
 	NULL,
 };
 
@@ -142,8 +282,6 @@ static const struct attribute_group *attr_groups[] = {
 	&cpumask_attr_group,
 	NULL,
 };
-
-static DEFINE_PER_CPU(char, hv_gpci_reqb[HGPCI_REQ_BUFFER_SIZE]) __aligned(sizeof(uint64_t));
 
 static unsigned long single_gpci_request(u32 req, u32 starting_index,
 		u16 secondary_index, u8 version_in, u32 offset, u8 length,
@@ -325,6 +463,23 @@ static int hv_gpci_cpu_hotplug_init(void)
 			  ppc_hv_gpci_cpu_offline);
 }
 
+static void add_sysinfo_interface_files(void)
+{
+	struct device_attribute *attr = kzalloc(sizeof(*attr), GFP_KERNEL);
+
+	if (!attr) {
+		pr_info("Memory allocation failed for processor_bug_topology interface file\n");
+		return;
+	}
+
+	/* Add processor_bus_topology attribute in the interface_attrs attribute array */
+	sysfs_attr_init(&attr->attr);
+	attr->attr.name = "processor_bug_topology";
+	attr->attr.mode = 0444;
+	attr->show = processor_bus_topology_show;
+	interface_attrs[INTERFACE_PROCESSOR_BUS_TOPOLOGY_ATTR] = &attr->attr;
+}
+
 static int hv_gpci_init(void)
 {
 	int r;
@@ -387,6 +542,10 @@ static int hv_gpci_init(void)
 	r = perf_pmu_register(&h_gpci_pmu, h_gpci_pmu.name, -1);
 	if (r)
 		return r;
+
+	/* sysinfo interface files are not available for power9 and previous platforms */
+	if (PVR_VER(mfspr(SPRN_PVR)) >= PVR_POWER10)
+		add_sysinfo_interface_files();
 
 	return 0;
 }
