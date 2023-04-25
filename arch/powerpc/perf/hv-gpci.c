@@ -102,8 +102,125 @@ static ssize_t cpumask_show(struct device *dev,
 	return cpumap_print_to_pagebuf(true, buf, &hv_gpci_cpumask);
 }
 
+static DEFINE_PER_CPU(char, hv_gpci_reqb[HGPCI_REQ_BUFFER_SIZE]) __aligned(sizeof(uint64_t));
+
+static unsigned long systeminfo_gpci_request(u32 req, u32 starting_index,
+			u16 secondary_index, char *buf,
+			size_t *n, struct hv_gpci_request_buffer *arg)
+{
+	unsigned long ret;
+	size_t i, j;
+
+	arg->params.counter_request = cpu_to_be32(req);
+	arg->params.starting_index = cpu_to_be32(starting_index);
+	arg->params.secondary_index = cpu_to_be16(secondary_index);
+
+	ret = plpar_hcall_norets(H_GET_PERF_COUNTER_INFO,
+			virt_to_phys(arg), HGPCI_REQ_BUFFER_SIZE);
+
+	/*
+	 * detail_rc value as '0x1b' corresponds to 'GEN_BUF_TOO_SMALL',
+	 * which means the current buffer size cannot accommodate
+	 * all the information and a partial buffer returned.
+	 * Return with hcall fail incase of details_rc value other than
+	 * 0x0 (Success) or 0x1b (GEN_BUF_TOO_SMALL).
+	 */
+	if (ret &&  be32_to_cpu(arg->params.detail_rc) != 0x1b) {
+		pr_debug("hcall failed, couldn't get system information: 0x%lx\n", ret);
+		goto out;
+	}
+
+	/*
+	 * hcall H_GET_PERF_COUNTER_INFO populates the 'returned_values'
+	 * to show the total number of counter_value array elements
+	 * returned via hcall.
+	 * hcall also populates 'cv_element_size' corresponds to individual
+	 * counter_value array element size. Below loop go through all
+	 * counter_value array elements as per their size and add it to
+	 * the output buffer.
+	 */
+	for (i = 0; i < be16_to_cpu(arg->params.returned_values); i++) {
+		j = i * be16_to_cpu(arg->params.cv_element_size);
+
+		for (; j < (i + 1) * be16_to_cpu(arg->params.cv_element_size); j++)
+			*n += sprintf(buf + *n,  "%02x", (u8)arg->bytes[j]);
+		*n += sprintf(buf + *n,  "\n");
+	}
+
+out:
+	put_cpu_var(hv_gpci_reqb);
+	return ret;
+}
+
+static ssize_t processor_bus_topology_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct hv_gpci_request_buffer *arg;
+	unsigned long ret;
+	size_t n = 0;
+
+	arg = (void *)get_cpu_var(hv_gpci_reqb);
+	memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+	/*
+	 * Pass the counter request 0xD0 corresponds to request
+	 * type 'Processor_bus_topology', to retrieve
+	 * the system topology information.
+	 * starting_index value implies the starting hardware
+	 * chip id, hence passing the value 0.
+	 */
+	ret = systeminfo_gpci_request(0xD0, 0, 0, buf, &n, arg);
+
+	if (!ret)
+		return n;
+
+	if (ret &&  be32_to_cpu(arg->params.detail_rc) != 0x1b)
+		goto out;
+
+	/*
+	 * detail_rc value as '0x1b' implies that buffer size
+	 * cannot accommodate all the information, and a partial buffer
+	 * returned. To handle that, we need to take subsequent requests
+	 * with greater starting index to retrieve additional (missing) data.
+	 * Below loop do subsequent hcalls with greater starting index and add it
+	 * to buffer util we get all the information.
+	 */
+	while (be32_to_cpu(arg->params.detail_rc) == 0x1b) {
+		int returned_values = be16_to_cpu(arg->params.returned_values);
+		int elementsize = be16_to_cpu(arg->params.cv_element_size);
+		int last_element = (returned_values - 1) * elementsize;
+
+		/*
+		 * Since the starting index type is included in the counter_value
+		 * buffer as an element, use the value in the last
+		 * array element plus 1 as subsequent starting index.
+		 */
+		u32 starting_index = arg->bytes[last_element + 3] +
+				(arg->bytes[last_element + 2] << 8) +
+				(arg->bytes[last_element + 1] << 16) +
+				(arg->bytes[last_element] << 24) + 1;
+
+		memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+		ret = systeminfo_gpci_request(0xD0, starting_index, 0, buf, &n, arg);
+
+		if (!ret)
+			return n;
+
+		if (ret &&  be32_to_cpu(arg->params.detail_rc) != 0x1b)
+			goto out;
+	}
+
+	return n;
+
+out:
+	put_cpu_var(hv_gpci_reqb);
+	return sprintf(buf, "%d\n", 0);
+}
+
 static DEVICE_ATTR_RO(kernel_version);
 static DEVICE_ATTR_RO(cpumask);
+static DEVICE_ATTR_RO(processor_bus_topology);
 
 HV_CAPS_ATTR(version, "0x%x\n");
 HV_CAPS_ATTR(ga, "%d\n");
@@ -118,6 +235,7 @@ static struct attribute *interface_attrs[] = {
 	&hv_caps_attr_expanded.attr,
 	&hv_caps_attr_lab.attr,
 	&hv_caps_attr_collect_privileged.attr,
+	&dev_attr_processor_bus_topology.attr,
 	NULL,
 };
 
@@ -142,8 +260,6 @@ static const struct attribute_group *attr_groups[] = {
 	&cpumask_attr_group,
 	NULL,
 };
-
-static DEFINE_PER_CPU(char, hv_gpci_reqb[HGPCI_REQ_BUFFER_SIZE]) __aligned(sizeof(uint64_t));
 
 static unsigned long single_gpci_request(u32 req, u32 starting_index,
 		u16 secondary_index, u8 version_in, u32 offset, u8 length,
