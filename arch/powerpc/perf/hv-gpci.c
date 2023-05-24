@@ -437,6 +437,158 @@ out:
 	return ret;
 }
 
+static void affinity_domain_via_partition_result_parse(int returned_values,
+			int element_size, char *buf, size_t *last_element,
+			size_t *n, struct hv_gpci_request_buffer *arg)
+{
+	size_t i = 0, j = 0;
+	size_t k, l, m;
+	uint16_t total_affinity_domain_ele, size_of_each_affinity_domain_ele;
+
+	/*
+	 * hcall H_GET_PERF_COUNTER_INFO populates the 'returned_values'
+	 * to show the total number of counter_value array elements
+	 * returned via hcall.
+	 * Unlike other request types, the data structure returned by this
+	 * request is variable-size. For this counter request type,
+	 * hcall populates 'cv_element_size' corresponds to minimum size of
+	 * the structure returned i.e; the size of the structure with no domain
+	 * information. Below loop go through all counter_value array
+	 * to determine the number and size of each domain array element and
+	 * add it to the output buffer.
+	 */
+	while (i < returned_values) {
+		k = j;
+		for (; k < j + element_size; k++)
+			*n += sprintf(buf + *n,  "%02x", (u8)arg->bytes[k]);
+		*n += sprintf(buf + *n,  "\n");
+
+		total_affinity_domain_ele = (u8)arg->bytes[k - 2] << 8 | (u8)arg->bytes[k - 3];
+		size_of_each_affinity_domain_ele = (u8)arg->bytes[k] << 8 | (u8)arg->bytes[k - 1];
+
+		for (l = 0; l < total_affinity_domain_ele; l++) {
+			for (m = 0; m < size_of_each_affinity_domain_ele; m++) {
+				*n += sprintf(buf + *n,  "%02x", (u8)arg->bytes[k]);
+				k++;
+			}
+			*n += sprintf(buf + *n,  "\n");
+		}
+
+		*n += sprintf(buf + *n,  "\n");
+		i++;
+		j = k;
+	}
+
+	*last_element = k;
+}
+
+static ssize_t affinity_domain_via_partition_show(struct device *dev, struct device_attribute *attr,
+							char *buf)
+{
+	struct hv_gpci_request_buffer *arg;
+	unsigned long ret;
+	size_t n = 0;
+	size_t last_element = 0;
+	u32 starting_index;
+
+	arg = (void *)get_cpu_var(hv_gpci_reqb);
+	memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+	/*
+	 * Pass the counter request value 0xB1 corresponds to request
+	 * type 'Affinity_domain_information_by_partition',
+	 * to retrieve the system affinity domain information.
+	 * starting_index value refers to the starting hardware
+	 * processor index.
+	 */
+	arg->params.counter_request = cpu_to_be32(AFFINITY_DOMAIN_VIA_PAR);
+	arg->params.starting_index = cpu_to_be32(0);
+
+	ret = plpar_hcall_norets(H_GET_PERF_COUNTER_INFO,
+			virt_to_phys(arg), HGPCI_REQ_BUFFER_SIZE);
+
+	if (!ret)
+		goto parse_result;
+
+	/*
+	 * ret value as 'H_PARAMETER' implies that buffer size
+	 * which implies can't accommodate all information, and a partial buffer
+	 * returned. To handle that, we need to take subsequent requests
+	 * with greater starting index to retrieve additional (missing) data.
+	 * Below loop do subsequent hcalls with greater starting index and add it
+	 * to buffer util we get all the information.
+	 */
+	while (ret == H_PARAMETER) {
+		affinity_domain_via_partition_result_parse(
+			be16_to_cpu(arg->params.returned_values) - 1,
+			be16_to_cpu(arg->params.cv_element_size), buf,
+			&last_element, &n, arg);
+
+		if (n >= PAGE_SIZE) {
+			put_cpu_var(hv_gpci_reqb);
+			pr_debug("System information exceeds PAGE_SIZE\n");
+			return -EFBIG;
+		}
+
+		/*
+		 * Since the starting index type is included in the counter_value
+		 * buffer as an element, use the value in the last
+		 * array element plus 1 as subsequent starting index.
+		 */
+		starting_index = (u8)arg->bytes[last_element] << 8 |
+				(u8)arg->bytes[last_element + 1];
+
+		memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+		arg->params.counter_request = cpu_to_be32(AFFINITY_DOMAIN_VIA_PAR);
+		arg->params.starting_index = cpu_to_be32(starting_index);
+
+		ret = plpar_hcall_norets(H_GET_PERF_COUNTER_INFO,
+				virt_to_phys(arg), HGPCI_REQ_BUFFER_SIZE);
+
+		if (ret && (ret != H_PARAMETER))
+			goto out;
+	}
+
+parse_result:
+	affinity_domain_via_partition_result_parse(
+		be16_to_cpu(arg->params.returned_values),
+		be16_to_cpu(arg->params.cv_element_size),
+		buf, &last_element, &n, arg);
+
+	put_cpu_var(hv_gpci_reqb);
+	return n;
+
+out:
+	put_cpu_var(hv_gpci_reqb);
+
+	/*
+	 * ret value as 'H_PARAMETER' corresponds to 'GEN_BUF_TOO_SMALL',
+	 * which means that the current buffer size cannot accommodate
+	 * all the information and a partial buffer returned.
+	 * hcall fails incase of ret value other than H_SUCCESS or H_PARAMETER.
+	 *
+	 * ret value as H_AUTHORITY implies that partition is not permitted to retrieve
+	 * performance information, and required to set
+	 * "Enable Performance Information Collection" option.
+	 */
+	if (ret == H_AUTHORITY)
+		return -EPERM;
+
+	/*
+	 * ret value as H_NOT_AVAILABLE implies that requested system information is
+	 * not available for the firmware level and platform.
+	 */
+	if (ret == H_NOT_AVAILABLE)
+		return -EOPNOTSUPP;
+
+	/*
+	 * hcall can fail with other possible ret value like H_PRIVILEGE/H_HARDWARE
+	 * because of invalid buffer-length/address or due to some hardware
+	 * error.
+	 */
+	return -EIO;
+}
+
 static DEVICE_ATTR_RO(kernel_version);
 static DEVICE_ATTR_RO(cpumask);
 
@@ -470,6 +622,11 @@ static struct attribute *interface_attrs[] = {
 	NULL,
 	/*
 	 * This NULL is a placeholder for the affinity_domain_via_domain
+	 * attribute, set in init function if applicable.
+	 */
+	NULL,
+	/*
+	 * This NULL is a placeholder for the affinity_domain_via_partition
 	 * attribute, set in init function if applicable.
 	 */
 	NULL,
@@ -713,6 +870,10 @@ static void sysinfo_device_attr_create(int sysinfo_interface_group_index)
 		attr->attr.name = "affinity_domain_via_domain";
 		attr->show = affinity_domain_via_domain_show;
 	break;
+	case INTERFACE_AFFINITY_DOMAIN_VIA_PAR_ATTR:
+		attr->attr.name = "affinity_domain_via_partition";
+		attr->show = affinity_domain_via_partition_show;
+	break;
 	}
 
 	attr->attr.mode = 0444;
@@ -735,6 +896,9 @@ static void add_sysinfo_interface_files(void)
 
 	/* Add affinity_domain_via_domain attribute in the interface_attrs attribute array */
 	sysinfo_device_attr_create(INTERFACE_AFFINITY_DOMAIN_VIA_DOM_ATTR);
+
+	/* Add affinity_domain_via_partition attribute in the interface_attrs attribute array */
+	sysinfo_device_attr_create(INTERFACE_AFFINITY_DOMAIN_VIA_PAR_ATTR);
 }
 
 static int hv_gpci_init(void)
