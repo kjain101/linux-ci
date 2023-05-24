@@ -141,3 +141,17 @@ Description:	admin read only
 		  this sysfs file will be created.
 		* The end user reading this sysfs file must decode the content as per
 		  underneath platform/firmware.
+
+What:		/sys/devices/hv_gpci/interface/affinity_domain_via_domain
+Date:		July 2023
+Contact:	Linux on PowerPC Developer List <linuxppc-dev@lists.ozlabs.org>
+Description:	admin read only
+		This sysfs file exposes the system topology information by making HCALL
+		H_GET_PERF_COUNTER_INFO. The HCALL is made with counter request value
+		AFFINITY_DOMAIN_INFORMATION_BY_DOMAIN(0xB0).
+		* This sysfs file will only be created on power10 and above platforms.
+		* User needs root access to read data from this sysfs file.
+		* Incase the HCALL fails with errors that can be resolve during runtime,
+		  this sysfs file will be created.
+		* The end user reading this sysfs file must decode the content as per
+		  underneath platform/firmware.
