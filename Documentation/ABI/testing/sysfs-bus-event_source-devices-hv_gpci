@@ -115,3 +115,17 @@ Description:	admin read only
 
 
 		* "H_SUCCESS" : Successfully returned system information in the requested buffer.
+
+What:		/sys/devices/hv_gpci/interface/processor_config
+Date:		May 2023
+Contact:	Linux on PowerPC Developer List <linuxppc-dev@lists.ozlabs.org>
+Description:	admin read only
+		This sysfs file exposes the system processor config information by making HCALL
+		H_GET_PERF_COUNTER_INFO. The HCALL is made with token request type
+		PROCESSOR_CONFIG(0x90).
+		* The end user reading this sysfs file need to decode the result's data format as per
+		  getPerfCountInfo documentation, for the underneath platform/firmware.
+		* This sysfs file is only available for power10 and later platforms. Incase the HCALL
+		  failed with hardware/permission issue or the support for PROCESSOR_CONFIG token
+		  removed from future platforms, this sysfs file still be created and error out
+		  when reading it.
