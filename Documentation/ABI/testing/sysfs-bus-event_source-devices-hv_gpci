@@ -129,3 +129,17 @@ Description:	admin read only
 		  failed with hardware/permission issue or the support for PROCESSOR_CONFIG token
 		  removed from future platforms, this sysfs file still be created and error out
 		  when reading it.
+
+What:		/sys/devices/hv_gpci/interface/affinity_domain_via_virtual_processor
+Date:		May 2023
+Contact:	Linux on PowerPC Developer List <linuxppc-dev@lists.ozlabs.org>
+Description:	admin read only
+		This sysfs file exposes the affinity domain via virtual processors information
+		by making HCALL H_GET_PERF_COUNTER_INFO. The HCALL is made with token request type
+		AFFINITY_DOMAIN_INFORMATION_BY_VIRTUAL_PROCESSOR(0xA0).
+		* The end user reading this sysfs file need to decode the result's data format as per
+		  getPerfCountInfo documentation, for the underneath platform/firmware.
+		* This sysfs file is only available for power10 and later platforms. Incase the HCALL
+		  failed with hardware/permission issue or the support for
+		  AFFINITY_DOMAIN_INFORMATION_BY_VIRTUAL_PROCESSOR token removed from future platforms,
+		  this sysfs file still be created and error out when reading it.
