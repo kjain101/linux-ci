@@ -26,11 +26,13 @@ enum {
 /* Counter request value to retrieve system information */
 #define PROCESSOR_BUS_TOPOLOGY	0XD0
 #define PROCESSOR_CONFIG	0X90
+#define AFFINITY_DOMAIN_VIA_VP	0xA0 /* affinity domain via virtual processor */
 
 /* Interface attribute array index to store system information */
 #define INTERFACE_PROCESSOR_BUS_TOPOLOGY_ATTR	6
 #define INTERFACE_PROCESSOR_CONFIG_ATTR		7
-#define INTERFACE_NULL_ATTR			8
+#define INTERFACE_AFFINITY_DOMAIN_VIA_VP_ATTR	8
+#define INTERFACE_NULL_ATTR			9
 
 #define REQUEST_FILE "../hv-gpci-requests.h"
 #define NAME_LOWER hv_gpci
