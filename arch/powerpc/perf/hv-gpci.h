@@ -25,9 +25,12 @@ enum {
 
 /* Counter request value to retrieve system information */
 #define PROCESSOR_BUS_TOPOLOGY 0XD0 /* processor bus topology */
+#define PROCESSOR_CONFIG	0X90 /* processor config */
 
 /* Interface attribute array index to store system information */
 #define INTERFACE_PROCESSOR_BUS_TOPOLOGY_ATTR	6
+#define INTERFACE_PROCESSOR_CONFIG_ATTR		7
+#define INTERFACE_NULL_ATTR			8
 
 #define REQUEST_FILE "../hv-gpci-requests.h"
 #define NAME_LOWER hv_gpci
