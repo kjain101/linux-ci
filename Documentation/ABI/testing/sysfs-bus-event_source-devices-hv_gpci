@@ -80,3 +80,38 @@ Contact:	Linux on PowerPC Developer List <linuxppc-dev@lists.ozlabs.org>
 Description:	read only
 		This sysfs file exposes the cpumask which is designated to make
 		HCALLs to retrieve hv-gpci pmu event counter data.
+
+What:		/sys/devices/hv_gpci/interface/processor_bus_topology
+Date:		May 2023
+Contact:	Linux on PowerPC Developer List <linuxppc-dev@lists.ozlabs.org>
+Description:	admin read only
+		This sysfs file exposes the system topology information by making HCALL
+		H_GET_PERF_COUNTER_INFO. The HCALL is made with token request type
+		PROCESSOR_BUS_TOPOLOGY(0xD0).
+		* The end user reading this sysfs file need to decode the result's data format as per
+		  getPerfCountInfo documentation, for the underneath platform/firmware.
+		* This sysfs file is only available for power10 and later platforms. Incase the HCALL
+		  failed with hardware/permission issue or the support for PROCESSOR_BUS_TOPOLOGY token
+		  removed from future platforms, this sysfs file still be created and error out
+		  when reading it.
+
+		Below are currently known returned values when making H_GET_PERF_COUNTER_INFO hcall.
+
+		* "H_AUTHORITY" : Partition is not permitted to retrieve performance information,
+				  required to set "Enable Performance Information Collection" option.
+
+		* "H_NOT_AVAILABLE" : Requested system information is not available for the firmware
+				      level and platform.
+
+		* "H_PRIVILEGE" : Can't retrieve system information because of invalid buffer length
+				  or invalid address. Refer getPerfCountInfo v1.018 documentation for
+				  more information.
+
+		* "H_HARDWARE" : Can't retrieve system information because of hardware error.
+				 For ex: Physical memory issue which results in not able to read
+				 memory data.
+
+		* "H_PARAMETER" : Partial system information returned because of limited buffer size.
+
+
+		* "H_SUCCESS" : Successfully returned system information in the requested buffer.
