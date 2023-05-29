@@ -237,6 +237,72 @@ out:
 	return ret;
 }
 
+static ssize_t processor_config_show(struct device *dev, struct device_attribute *attr,
+					char *buf)
+{
+	struct hv_gpci_request_buffer *arg;
+	unsigned long ret;
+	size_t n = 0;
+
+	arg = (void *)get_cpu_var(hv_gpci_reqb);
+	memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+	/*
+	 * Pass the counter request value 0x90 corresponds to request
+	 * type 'Processor_config', to retrieve
+	 * the system processor information.
+	 * starting_index value implies the starting hardware
+	 * processor index.
+	 */
+	ret = systeminfo_gpci_request(PROCESSOR_CONFIG, 0, 0, buf, &n, arg);
+
+	if (!ret)
+		return n;
+
+	if (ret != H_PARAMETER)
+		goto out;
+
+	/*
+	 * ret value as 'H_PARAMETER' corresponds to 'GEN_BUF_TOO_SMALL',
+	 * which implies can't accommodate all information, and a partial buffer
+	 * returned. To handle that, we need to take subsequent requests
+	 * with greater starting index to retrieve additional (missing) data.
+	 * Below loop do subsequent hcalls with greater starting index and add it
+	 * to buffer util we get all the information.
+	 */
+	while (ret == H_PARAMETER) {
+		int returned_values = be16_to_cpu(arg->params.returned_values);
+		int elementsize = be16_to_cpu(arg->params.cv_element_size);
+		int last_element = (returned_values - 1) * elementsize;
+
+		/*
+		 * Since the starting index type is included in the counter_value
+		 * buffer as an element, use the value in the last
+		 * array element plus 1 as subsequent starting index.
+		 */
+		u32 starting_index = arg->bytes[last_element + 3] +
+				(arg->bytes[last_element + 2] << 8) +
+				(arg->bytes[last_element + 1] << 16) +
+				(arg->bytes[last_element] << 24) + 1;
+
+		memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+		ret = systeminfo_gpci_request(PROCESSOR_CONFIG, starting_index, 0, buf, &n, arg);
+
+		if (!ret)
+			return n;
+
+		if (ret != H_PARAMETER)
+			goto out;
+	}
+
+	return n;
+
+out:
+	put_cpu_var(hv_gpci_reqb);
+	return ret;
+}
+
 static DEVICE_ATTR_RO(kernel_version);
 static DEVICE_ATTR_RO(cpumask);
 
@@ -255,6 +321,11 @@ static struct attribute *interface_attrs[] = {
 	&hv_caps_attr_collect_privileged.attr,
 	/*
 	 * This NULL is a placeholder for the processor_bus_topology
+	 * attribute, set in init function if applicable.
+	 */
+	NULL,
+	/*
+	 * This NULL is a placeholder for the processor_config
 	 * attribute, set in init function if applicable.
 	 */
 	NULL,
@@ -463,21 +534,46 @@ static int hv_gpci_cpu_hotplug_init(void)
 			  ppc_hv_gpci_cpu_offline);
 }
 
-static void add_sysinfo_interface_files(void)
+static void sysinfo_device_attr_create(int sysinfo_interface_group_index)
 {
-	struct device_attribute *attr = kzalloc(sizeof(*attr), GFP_KERNEL);
+	struct device_attribute *attr;
 
-	if (!attr) {
-		pr_info("Memory allocation failed for processor_bug_topology interface file\n");
+	if (sysinfo_interface_group_index < INTERFACE_PROCESSOR_BUS_TOPOLOGY_ATTR ||
+			sysinfo_interface_group_index >= INTERFACE_NULL_ATTR) {
+		pr_info("Wrong interface group index for system information\n");
 		return;
 	}
 
-	/* Add processor_bus_topology attribute in the interface_attrs attribute array */
+	attr = kzalloc(sizeof(*attr), GFP_KERNEL);
+	if (!attr) {
+		pr_info("Mem allocation failed, sysinfo index:%d\n", sysinfo_interface_group_index);
+		return;
+	}
+
 	sysfs_attr_init(&attr->attr);
-	attr->attr.name = "processor_bug_topology";
+
+	switch (sysinfo_interface_group_index) {
+	case INTERFACE_PROCESSOR_BUS_TOPOLOGY_ATTR:
+		attr->attr.name = "processor_bug_topology";
+		attr->show = processor_bus_topology_show;
+	break;
+	case INTERFACE_PROCESSOR_CONFIG_ATTR:
+		attr->attr.name = "processor_config";
+		attr->show = processor_config_show;
+	break;
+	}
+
 	attr->attr.mode = 0444;
-	attr->show = processor_bus_topology_show;
-	interface_attrs[INTERFACE_PROCESSOR_BUS_TOPOLOGY_ATTR] = &attr->attr;
+	interface_attrs[sysinfo_interface_group_index] = &attr->attr;
+}
+
+static void add_sysinfo_interface_files(void)
+{
+	/* Add processor_bus_topology attribute in the interface_attrs attribute array */
+	sysinfo_device_attr_create(INTERFACE_PROCESSOR_BUS_TOPOLOGY_ATTR);
+
+	/* Add processor_config attribute in the interface_attrs attribute array */
+	sysinfo_device_attr_create(INTERFACE_PROCESSOR_CONFIG_ATTR);
 }
 
 static int hv_gpci_init(void)
