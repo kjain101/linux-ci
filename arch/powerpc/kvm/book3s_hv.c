@@ -4192,6 +4192,21 @@ static void do_trace_nested_cs_time(struct kvm_vcpu *vcpu)
 	*l2_runtime_agg_ptr = l2_runtime_ns;
 }
 
+u64 kvmhv_get_l1_to_l2_cs_time(void)
+{
+	return tb_to_ns(be64_to_cpu(get_lppaca()->l1_to_l2_cs_tb));
+}
+
+u64 kvmhv_get_l2_to_l1_cs_time(void)
+{
+	return tb_to_ns(be64_to_cpu(get_lppaca()->l2_to_l1_cs_tb));
+}
+
+u64 kvmhv_get_l2_runtime_agg(void)
+{
+	return tb_to_ns(be64_to_cpu(get_lppaca()->l2_runtime_tb));
+}
+
 #else
 int kvmhv_get_l2_counters_status(void)
 {
